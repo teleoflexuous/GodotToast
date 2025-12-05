@@ -134,12 +134,12 @@ func move_to(y: float) -> void:
 func dismiss() -> void:
 	if not is_inside_tree():
 		return
-	_animate_out()
+	_animate_out(true)
 
-func _animate_out() -> void:
+func _animate_out(force: bool = false) -> void:
 	_kill_tween()
 
-	if _is_hovered or persistent or _is_in_queue:
+	if not force and (_is_hovered or persistent or _is_in_queue):
 		if not persistent and not _is_in_queue:
 			_timer.wait_time = 0.25
 			_timer.start()

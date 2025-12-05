@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://dxm70ponh1ura"]
 
-[ext_resource type="Script" uid="uid://j4iycf6ja20b" path="res://addons/addons/properUI_toast/Toast.gd" id="1_e5id5"]
+[ext_resource type="Script" uid="uid://j4iycf6ja20b" path="res://addons/properUI_toast/Toast.gd" id="1_e5id5"]
 
 [node name="Toast" type="PanelContainer"]
 custom_minimum_size = Vector2(320, 0)
@@ -30,6 +30,7 @@ size_flags_horizontal = 3
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 1
+custom_minimum_size = Vector2(50, 0)
 text = "Toast message"
 autowrap_mode = 2
 max_lines_visible = 3

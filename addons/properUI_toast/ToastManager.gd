@@ -37,6 +37,7 @@ var _layer: CanvasLayer
 var _roots: Dictionary = {}     # key -> Control stack root
 var _active: Dictionary = {}    # key -> Array[Control]
 var _queue: Dictionary = {}     # key -> Array[Dictionary]
+var _pending: Dictionary = {}   # key -> int (count of toasts currently spawning)
 
 func _ready() -> void:
 	# Create our drawing layer high in order
@@ -47,6 +48,7 @@ func _ready() -> void:
 	# Create 9 stack roots
 	for p in ["TL","T","TR","ML","C","MR","BL","B","BR"]:
 		_create_stack_root(p, p)
+		_pending[p] = 0
 
 func _create_stack_root(key: String, pos: String) -> void:
 	var box := Control.new()
@@ -138,9 +140,13 @@ func show_toast(text: String, kind: String = "info", opts: Dictionary = {}, posi
 
 	opts["reduced_motion"] = bool(opts.get("reduced_motion", reduced_motion))
 
-	var active_arr: Array = _active[key]
-	if active_arr.size() < int(max_active.get(key, 3)):
+	var active_count: int = (_active[key] as Array).size()
+	var pending_count: int = _pending.get(key, 0)
+	
+	if active_count + pending_count < int(max_active.get(key, 3)):
+		_pending[key] = pending_count + 1
 		await _spawn_and_show_in(key, text, kind, opts)
+		_pending[key] = max(0, _pending[key] - 1)
 	else:
 		_queue[key].append({ "text": text, "kind": kind, "opts": opts })
 
@@ -184,9 +190,11 @@ func _on_toast_dismissed(key: String, toast: Control) -> void:
 	_promote_from_queue(key)
 
 func _promote_from_queue(key: String) -> void:
-	while (_active[key] as Array).size() < int(max_active.get(key, 3)) and (_queue[key] as Array).size() > 0:
+	while (_active[key] as Array).size() + _pending.get(key, 0) < int(max_active.get(key, 3)) and (_queue[key] as Array).size() > 0:
 		var next: Dictionary = _queue[key].pop_front()
+		_pending[key] = _pending.get(key, 0) + 1
 		await _spawn_and_show_in(key, next.text, next.kind, next.opts)
+		_pending[key] = max(0, _pending[key] - 1)
 
 func _place_and_animate(key: String, animated_in_toast: Control) -> void:
 	var root: Control = _roots[key]

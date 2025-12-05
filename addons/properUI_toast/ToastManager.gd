@@ -3,7 +3,7 @@ extends Node
 @export var default_position: String = "BR" # TL, T, TR, ML, C, MR, BL, B, BR
 @export var spacing_px: float = 10.0
 @export var reduced_motion: bool = false
-@export var toast_scene: PackedScene = preload("res://addons/properUI_toast/toast/Toast.tscn")
+@export var toast_scene: PackedScene = preload("res://addons/addons/properUI_toast/Toast.tscn")
 
 # Per-position widths
 @export var toast_widths := {

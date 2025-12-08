@@ -2,7 +2,7 @@
 extends EditorPlugin
 
 func _enter_tree() -> void:
-	add_autoload_singleton("ToastManager", "res://addons/addons/properUI_toast/ToastManager.gd")
+	add_autoload_singleton("ToastManager", "res://addons/properUI_toast/ToastManager.gd")
 
 func _exit_tree() -> void:
 	remove_autoload_singleton("ToastManager")

@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://b8x7q5y203w4"]
 
-[ext_resource type="Script" path="res://addons/addons/properUI_toast/TestScene.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://d1s86ahpbwlit" path="res://addons/properUI_toast/TestScene.gd" id="1_script"]
 
 [node name="TestScene" type="Control"]
 layout_mode = 3

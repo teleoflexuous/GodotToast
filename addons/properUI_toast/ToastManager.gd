@@ -3,7 +3,7 @@ extends Node
 @export var default_position: String = "BR" # TL, T, TR, ML, C, MR, BL, B, BR
 @export var spacing_px: float = 10.0
 @export var reduced_motion: bool = false
-@export var toast_scene: PackedScene = preload("res://addons/addons/properUI_toast/Toast.tscn")
+@export var toast_scene: PackedScene = preload("res://addons/properUI_toast/Toast.tscn")
 
 # Per-position widths
 @export var toast_widths := {
@@ -142,7 +142,7 @@ func show_toast(text: String, kind: String = "info", opts: Dictionary = {}, posi
 
 	var active_count: int = (_active[key] as Array).size()
 	var pending_count: int = _pending.get(key, 0)
-	
+
 	if active_count + pending_count < int(max_active.get(key, 3)):
 		_pending[key] = pending_count + 1
 		await _spawn_and_show_in(key, text, kind, opts)

@@ -1,11 +1,14 @@
 extends Node
 
-@export var default_position: String = "BR" # TL, T, TR, ML, C, MR, BL, B, BR
+@export var default_position: String = "BR"
 @export var spacing_px: float = 10.0
 @export var reduced_motion: bool = false
 @export var toast_scene: PackedScene = preload("res://addons/properUI_toast/Toast.tscn")
 
-# Per-position widths
+@export var enable_notification_panel: bool = false
+@export var notification_panel_scene: PackedScene = preload("res://addons/properUI_toast/NotificationPanel.tscn")
+@export var notification_panel_position: String = "TR"
+
 @export var toast_widths := {
 	"TL": 320.0, "T": 360.0, "TR": 320.0,
 	"ML": 320.0, "C": 360.0, "MR": 320.0,
@@ -18,37 +21,37 @@ extends Node
 	"BL": 3, "B": 3, "BR": 3
 }
 
-# Insets for stack boxes (distance from edges, converted by anchor preset)
 @export var stack_boxes := {
 	"TL": {"left": 20.0, "right": 420.0, "top": 20.0, "bottom": 420.0},
 	"T":  {"left": 420.0, "right": 420.0, "top": 20.0, "bottom": 540.0},
 	"TR": {"left": 420.0, "right": 20.0, "top": 20.0, "bottom": 420.0},
-
 	"ML": {"left": 20.0, "right": 420.0, "top": 180.0, "bottom": 180.0},
 	"C":  {"left": 420.0, "right": 420.0, "top": 180.0, "bottom": 180.0},
 	"MR": {"left": 420.0, "right": 20.0, "top": 180.0, "bottom": 180.0},
-
 	"BL": {"left": 20.0, "right": 420.0, "top": 420.0, "bottom": 20.0},
 	"B":  {"left": 420.0, "right": 420.0, "top": 540.0, "bottom": 20.0},
 	"BR": {"left": 420.0, "right": 20.0, "top": 420.0, "bottom": 20.0}
 }
 
 var _layer: CanvasLayer
-var _roots: Dictionary = {}     # key -> Control stack root
-var _active: Dictionary = {}    # key -> Array[Control]
-var _queue: Dictionary = {}     # key -> Array[Dictionary]
-var _pending: Dictionary = {}   # key -> int (count of toasts currently spawning)
+var _roots: Dictionary = {}
+var _active: Dictionary = {}
+var _queue: Dictionary = {}
+var _pending: Dictionary = {}
+var _notification_panel: Control = null
+var _debug_logger_name: String = "DebugLogger"
 
 func _ready() -> void:
-	# Create our drawing layer high in order
 	_layer = CanvasLayer.new()
 	_layer.layer = 100
 	add_child(_layer)
 
-	# Create 9 stack roots
 	for p in ["TL","T","TR","ML","C","MR","BL","B","BR"]:
 		_create_stack_root(p, p)
 		_pending[p] = 0
+	
+	if enable_notification_panel and notification_panel_scene:
+		_create_notification_panel()
 
 func _create_stack_root(key: String, pos: String) -> void:
 	var box := Control.new()
@@ -56,77 +59,47 @@ func _create_stack_root(key: String, pos: String) -> void:
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_layer.add_child(box)
 
-	# Anchors preset by quadrant/edge
 	match pos:
-		"TL":
-			box.anchors_preset = Control.PRESET_TOP_LEFT
-		"T":
-			box.anchors_preset = Control.PRESET_TOP_WIDE
-		"TR":
-			box.anchors_preset = Control.PRESET_TOP_RIGHT
-		"ML":
-			box.anchors_preset = Control.PRESET_LEFT_WIDE
-		"C":
-			box.anchors_preset = Control.PRESET_FULL_RECT
-		"MR":
-			box.anchors_preset = Control.PRESET_RIGHT_WIDE
-		"BL":
-			box.anchors_preset = Control.PRESET_BOTTOM_LEFT
-		"B":
-			box.anchors_preset = Control.PRESET_BOTTOM_WIDE
-		"BR":
-			box.anchors_preset = Control.PRESET_BOTTOM_RIGHT
-		_:
-			box.anchors_preset = Control.PRESET_BOTTOM_RIGHT
+		"TL": box.anchors_preset = Control.PRESET_TOP_LEFT
+		"T": box.anchors_preset = Control.PRESET_TOP_WIDE
+		"TR": box.anchors_preset = Control.PRESET_TOP_RIGHT
+		"ML": box.anchors_preset = Control.PRESET_LEFT_WIDE
+		"C": box.anchors_preset = Control.PRESET_FULL_RECT
+		"MR": box.anchors_preset = Control.PRESET_RIGHT_WIDE
+		"BL": box.anchors_preset = Control.PRESET_BOTTOM_LEFT
+		"B": box.anchors_preset = Control.PRESET_BOTTOM_WIDE
+		"BR": box.anchors_preset = Control.PRESET_BOTTOM_RIGHT
+		_: box.anchors_preset = Control.PRESET_BOTTOM_RIGHT
 
 	var cfg: Dictionary = stack_boxes.get(key, {"left": 20.0, "right": 20.0, "top": 20.0, "bottom": 20.0})
 
-	# Convert semantic insets to offsets based on the preset
 	if pos == "TL":
-		box.offset_left = float(cfg.left)
-		box.offset_top = float(cfg.top)
-		box.offset_right = box.offset_left + 400.0
-		box.offset_bottom = box.offset_top + 300.0
+		box.offset_left = float(cfg.left); box.offset_top = float(cfg.top)
+		box.offset_right = box.offset_left + 400.0; box.offset_bottom = box.offset_top + 300.0
 	elif pos == "T":
-		box.offset_left = float(cfg.left)
-		box.offset_right = -float(cfg.right)
-		box.offset_top = float(cfg.top)
-		box.offset_bottom = box.offset_top + 180.0
+		box.offset_left = float(cfg.left); box.offset_right = -float(cfg.right)
+		box.offset_top = float(cfg.top); box.offset_bottom = box.offset_top + 180.0
 	elif pos == "TR":
-		box.offset_left = -float(cfg.left) - 400.0
-		box.offset_right = -float(cfg.right)
-		box.offset_top = float(cfg.top)
-		box.offset_bottom = box.offset_top + 300.0
+		box.offset_left = -float(cfg.left) - 400.0; box.offset_right = -float(cfg.right)
+		box.offset_top = float(cfg.top); box.offset_bottom = box.offset_top + 300.0
 	elif pos == "ML":
-		box.offset_left = float(cfg.left)
-		box.offset_right = -float(cfg.right)
-		box.offset_top = float(cfg.top)
-		box.offset_bottom = -float(cfg.bottom)
+		box.offset_left = float(cfg.left); box.offset_right = -float(cfg.right)
+		box.offset_top = float(cfg.top); box.offset_bottom = -float(cfg.bottom)
 	elif pos == "C":
-		box.offset_left = float(cfg.left)
-		box.offset_right = -float(cfg.right)
-		box.offset_top = float(cfg.top)
-		box.offset_bottom = -float(cfg.bottom)
+		box.offset_left = float(cfg.left); box.offset_right = -float(cfg.right)
+		box.offset_top = float(cfg.top); box.offset_bottom = -float(cfg.bottom)
 	elif pos == "MR":
-		box.offset_left = float(cfg.left)
-		box.offset_right = -float(cfg.right)
-		box.offset_top = float(cfg.top)
-		box.offset_bottom = -float(cfg.bottom)
+		box.offset_left = float(cfg.left); box.offset_right = -float(cfg.right)
+		box.offset_top = float(cfg.top); box.offset_bottom = -float(cfg.bottom)
 	elif pos == "BL":
-		box.offset_left = float(cfg.left)
-		box.offset_right = box.offset_left + 400.0
-		box.offset_bottom = -float(cfg.bottom)
-		box.offset_top = box.offset_bottom - 300.0
+		box.offset_left = float(cfg.left); box.offset_right = box.offset_left + 400.0
+		box.offset_bottom = -float(cfg.bottom); box.offset_top = box.offset_bottom - 300.0
 	elif pos == "B":
-		box.offset_left = float(cfg.left)
-		box.offset_right = -float(cfg.right)
-		box.offset_bottom = -float(cfg.bottom)
-		box.offset_top = box.offset_bottom - 180.0
+		box.offset_left = float(cfg.left); box.offset_right = -float(cfg.right)
+		box.offset_bottom = -float(cfg.bottom); box.offset_top = box.offset_bottom - 180.0
 	elif pos == "BR":
-		box.offset_left = -float(cfg.left) - 400.0
-		box.offset_right = -float(cfg.right)
-		box.offset_bottom = -float(cfg.bottom)
-		box.offset_top = box.offset_bottom - 300.0
+		box.offset_left = -float(cfg.left) - 400.0; box.offset_right = -float(cfg.right)
+		box.offset_bottom = -float(cfg.bottom); box.offset_top = box.offset_bottom - 300.0
 
 	_roots[key] = box
 	_active[key] = []
@@ -142,7 +115,7 @@ func show_toast(text: String, kind: String = "info", opts: Dictionary = {}, posi
 
 	var active_count: int = (_active[key] as Array).size()
 	var pending_count: int = _pending.get(key, 0)
-
+	
 	if active_count + pending_count < int(max_active.get(key, 3)):
 		_pending[key] = pending_count + 1
 		await _spawn_and_show_in(key, text, kind, opts)
@@ -166,7 +139,6 @@ func _spawn_and_show_in(key: String, text: String, kind: String, opts: Dictionar
 	var toast: Control = toast_scene.instantiate() as Control
 	root.add_child(toast)
 
-	# Enforce column width per position
 	var w: float = float(toast_widths.get(key, 320.0))
 	if toast.has_method("set_width"):
 		toast.call("set_width", w)
@@ -175,7 +147,15 @@ func _spawn_and_show_in(key: String, text: String, kind: String, opts: Dictionar
 		toast.size.x = w
 
 	toast.call("setup", text, kind, opts)
-	# Ensure sizes are computed
+	var callback_variant: Variant = opts.get("action_callback", Callable())
+	if callback_variant is Callable:
+		var callback: Callable = callback_variant
+		if callback.is_valid() and toast.has_signal("action_invoked"):
+			_log_ui("[ToastManager] connect action callback for toast")
+			toast.connect("action_invoked", func(_name: String) -> void:
+				_log_ui("[ToastManager] action callback invoked")
+				callback.call()
+			)
 	await get_tree().process_frame
 
 	if toast.has_signal("dismissed"):
@@ -208,13 +188,10 @@ func _place_and_animate(key: String, animated_in_toast: Control) -> void:
 
 	var stack_from_bottom: bool = key == "BL" or key == "B" or key == "BR"
 	var stack_from_top: bool = key == "TL" or key == "T" or key == "TR"
-	var stack_center_y: bool = key == "ML" or key == "C" or key == "MR"
 
 	var y: float = 0.0
 	if stack_from_bottom:
 		y = area_h
-	elif stack_center_y:
-		y = area_h * 0.5
 	else:
 		y = 0.0
 
@@ -223,16 +200,16 @@ func _place_and_animate(key: String, animated_in_toast: Control) -> void:
 		if not is_instance_valid(t):
 			continue
 
-		var w: float = t.size.x
-		if w <= 1.0:
-			w = float(toast_widths.get(key, 320.0))
+		var tw: float = t.size.x
+		if tw <= 1.0:
+			tw = float(toast_widths.get(key, 320.0))
 
 		if align_right:
-			t.position.x = area_w - w
+			t.position.x = area_w - tw
 		elif align_left:
 			t.position.x = 0.0
 		elif align_center_x:
-			t.position.x = (area_w - w) * 0.5
+			t.position.x = (area_w - tw) * 0.5
 
 		var h: float = t.size.y
 		if h <= 1.0:
@@ -243,16 +220,6 @@ func _place_and_animate(key: String, animated_in_toast: Control) -> void:
 			y -= h
 			target_y = y
 			y -= spacing_px
-		elif stack_center_y:
-			var baseline: float = area_h * 0.5
-			target_y = baseline
-			for j in range(i + 1, (_active[key] as Array).size()):
-				var tj: Control = _active[key][j]
-				if is_instance_valid(tj):
-					var hj: float = tj.size.y
-					if hj <= 1.0:
-						hj = max(tj.get_minimum_size().y, 48.0)
-					target_y -= (hj + spacing_px)
 		else:
 			target_y = y
 			y += h + spacing_px
@@ -271,3 +238,72 @@ func _place_and_animate(key: String, animated_in_toast: Control) -> void:
 		if is_instance_valid(node):
 			node.z_index = i + 1
 			node.move_to_front()
+
+func _create_notification_panel() -> void:
+	_notification_panel = notification_panel_scene.instantiate()
+	_layer.add_child(_notification_panel)
+	
+	var pos_config = stack_boxes.get(notification_panel_position, stack_boxes["TR"])
+	_notification_panel.anchors_preset = _get_anchor_preset(notification_panel_position)
+	
+	match notification_panel_position:
+		"TR":
+			_notification_panel.offset_left = -float(pos_config.left) - 320.0
+			_notification_panel.offset_right = -float(pos_config.right)
+			_notification_panel.offset_top = float(pos_config.top)
+			_notification_panel.offset_bottom = float(pos_config.top) + 400.0
+		"TL":
+			_notification_panel.offset_left = float(pos_config.left)
+			_notification_panel.offset_right = float(pos_config.left) + 320.0
+			_notification_panel.offset_top = float(pos_config.top)
+			_notification_panel.offset_bottom = float(pos_config.top) + 400.0
+		"BR":
+			_notification_panel.offset_left = -float(pos_config.left) - 320.0
+			_notification_panel.offset_right = -float(pos_config.right)
+			_notification_panel.offset_bottom = -float(pos_config.bottom)
+			_notification_panel.offset_top = -float(pos_config.bottom) - 400.0
+		"BL":
+			_notification_panel.offset_left = float(pos_config.left)
+			_notification_panel.offset_right = float(pos_config.left) + 320.0
+			_notification_panel.offset_bottom = -float(pos_config.bottom)
+			_notification_panel.offset_top = -float(pos_config.bottom) - 400.0
+
+func _get_anchor_preset(pos: String) -> int:
+	match pos:
+		"TL": return Control.PRESET_TOP_LEFT
+		"T": return Control.PRESET_TOP_WIDE
+		"TR": return Control.PRESET_TOP_RIGHT
+		"ML": return Control.PRESET_LEFT_WIDE
+		"C": return Control.PRESET_FULL_RECT
+		"MR": return Control.PRESET_RIGHT_WIDE
+		"BL": return Control.PRESET_BOTTOM_LEFT
+		"B": return Control.PRESET_BOTTOM_WIDE
+		"BR": return Control.PRESET_BOTTOM_RIGHT
+	return Control.PRESET_BOTTOM_RIGHT
+
+func add_notification(id: String, message: String, priority: int, action: Callable = Callable()) -> void:
+	if not enable_notification_panel or not is_instance_valid(_notification_panel):
+		push_warning("ProperUIToast: Notification panel not enabled")
+		return
+	_notification_panel.call("add_notification", id, message, priority, action)
+
+func remove_notification(id: String) -> void:
+	if is_instance_valid(_notification_panel):
+		_notification_panel.call("remove_notification", id)
+
+func clear_all_notifications() -> void:
+	if is_instance_valid(_notification_panel):
+		_notification_panel.call("clear_all")
+
+func get_notification_panel() -> Control:
+	return _notification_panel
+
+func _log_ui(message: String) -> void:
+	var tree := get_tree()
+	if not tree:
+		return
+	var logger = null
+	if tree.root.has_node("/root/" + _debug_logger_name):
+		logger = tree.root.get_node("/root/" + _debug_logger_name)
+	if logger and logger.has_method("ui"):
+		logger.ui(message)

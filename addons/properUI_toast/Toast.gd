@@ -28,9 +28,14 @@ var _fade_sec: float = DEFAULT_FADE_SEC
 var _slide_px: float = DEFAULT_SLIDE_PX
 var _reduced_motion: bool = false
 var _is_in_queue: bool = false
-var _aria_role: String = "status" # "status" for info/success, "alert" for warning/error
+var _aria_role: String = "status"
 var _action_name_primary: String = ""
 var _action_name_secondary: String = ""
+var _click_action_name: String = ""
+var _dismiss_on_click_action: bool = false
+var _fit_to_content: bool = false
+var _fit_max_lines: int = 8
+var _debug_logger_name: String = "DebugLogger"
 
 func _ready() -> void:
 	message_label = get_node("Margin/HBox/Content/Message") as Label
@@ -39,13 +44,22 @@ func _ready() -> void:
 	primary_button = get_node("Margin/HBox/Content/Actions/ActionButton") as Button
 	secondary_button = get_node("Margin/HBox/Content/Actions/SecondaryActionButton") as Button
 	dismiss_button = get_node("Margin/HBox/Dismiss") as Button
+	var margin := get_node("Margin") as Control
+	var hbox := get_node("Margin/HBox") as Control
+	var content := get_node("Margin/HBox/Content") as Control
 
-	# Don’t steal clicks, but allow keyboard focus to support Esc/Enter.
-	mouse_filter = Control.MOUSE_FILTER_PASS
+	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_ALL
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	message_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	actions_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	mouse_entered.connect(_on_mouse_entered)
 	mouse_exited.connect(_on_mouse_exited)
+	gui_input.connect(_on_gui_input)
 
 	_timer = Timer.new()
 	_timer.one_shot = true
@@ -57,7 +71,6 @@ func _ready() -> void:
 	secondary_button.pressed.connect(func(): _emit_action(_action_name_secondary))
 	dismiss_button.pressed.connect(func(): dismiss())
 
-	# Accessibility hints (theme-agnostic)
 	_update_accessibility()
 
 	visible = false
@@ -73,23 +86,33 @@ func setup(text: String, type: String = "info", opts: Dictionary = {}) -> void:
 	_reduced_motion = bool(opts.get("reduced_motion", false))
 	persistent = bool(opts.get("persistent", false))
 
-	# Action API:
-	# opts.action = {"text": "Undo", "name": "undo"}     # primary
-	# opts.secondary_action = {"text": "View", "name": "view"} # optional secondary
 	_configure_actions(opts)
+	_click_action_name = String(opts.get("click_action_name", ""))
+	_dismiss_on_click_action = bool(opts.get("dismiss_on_click_action", false))
+	_fit_to_content = bool(opts.get("fit_to_content", false))
+	_fit_max_lines = int(opts.get("fit_max_lines", 8))
 
-	# Label behavior
 	message_label.text = text
 	message_label.clip_text = false
 	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	message_label.max_lines_visible = int(opts.get("max_lines", 3))
+	var max_lines := int(opts.get("max_lines", 3))
+	if _fit_to_content:
+		message_label.max_lines_visible = -1
+		_fit_message_lines()
+		call_deferred("_fit_message_lines")
+	else:
+		if max_lines == -1:
+			message_label.max_lines_visible = -1
+		else:
+			if max_lines <= 0:
+				max_lines = 3
+			message_label.max_lines_visible = max_lines
 	_set_kind_from_string(type)
 	_set_aria_role_for_kind()
+	_log_ui("[Toast] setup click_action=%s lines=%d" % [_click_action_name, message_label.max_lines_visible])
 
-	# Dismiss affordance
 	dismiss_button.visible = bool(opts.get("show_dismiss", true))
 
-	# RTL mirroring support: respect project/parent layout
 	layout_direction = int(opts.get("layout_direction", Control.LAYOUT_DIRECTION_INHERITED))
 
 	position.y = _target_y + (0.0 if _reduced_motion else _slide_px)
@@ -104,7 +127,7 @@ func set_queued(queued: bool) -> void:
 		_pause_timer()
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 	else:
-		mouse_filter = Control.MOUSE_FILTER_PASS
+		mouse_filter = Control.MOUSE_FILTER_STOP
 
 func place_immediately(y: float) -> void:
 	_target_y = y
@@ -163,7 +186,6 @@ func _cleanup_and_emit() -> void:
 func _start_timer_if_needed() -> void:
 	if persistent or _is_in_queue:
 		return
-	# Severity-based durations (readable and short-by-default)
 	var min_read: float = 0.5
 	if kind == Kind.WARNING:
 		_timer.wait_time = max(min_read, max(_display_sec, 4.0))
@@ -238,7 +260,6 @@ func _apply_visuals_for_kind() -> void:
 				icon_txt = "❌"
 
 		sb.border_color = border
-		# Subtle translucency and elevation
 		var bg := sb.bg_color
 		sb.bg_color = Color(bg.r, bg.g, bg.b, min(bg.a, 0.95))
 		sb.shadow_size = shadow_size
@@ -252,7 +273,6 @@ func _configure_actions(opts: Dictionary) -> void:
 	var act = opts.get("action", null)
 	var sec = opts.get("secondary_action", null)
 
-	# Primary
 	if act is Dictionary and act.has("text"):
 		_action_name_primary = String(act.get("name", "primary"))
 		primary_button.text = String(act.get("text", ""))
@@ -261,7 +281,6 @@ func _configure_actions(opts: Dictionary) -> void:
 		primary_button.visible = false
 		_action_name_primary = ""
 
-	# Secondary (minimal prominence)
 	if sec is Dictionary and sec.has("text"):
 		_action_name_secondary = String(sec.get("name", "secondary"))
 		secondary_button.text = String(sec.get("text", ""))
@@ -275,26 +294,64 @@ func _configure_actions(opts: Dictionary) -> void:
 func _emit_action(name: String) -> void:
 	if name == "":
 		return
+	_log_ui("[Toast] action_invoked=%s" % name)
 	emit_signal("action_invoked", name)
-	# Immediate dismiss if action is safe and directly related
-	dismiss()
+
+
+func _on_gui_input(event: InputEvent) -> void:
+	if _click_action_name.is_empty():
+		return
+	if not (event is InputEventMouseButton):
+		return
+	var mouse_event := event as InputEventMouseButton
+	if not mouse_event.pressed or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var local_point := mouse_event.position
+	var global_point := get_global_transform_with_canvas() * local_point
+	_log_ui("[Toast] body click received action=%s local=%s" % [_click_action_name, str(local_point)])
+
+	if dismiss_button and dismiss_button.visible and dismiss_button.get_global_rect().has_point(global_point):
+		_log_ui("[Toast] click ignored: dismiss button hit")
+		return
+	if primary_button and primary_button.visible and primary_button.get_global_rect().has_point(global_point):
+		_log_ui("[Toast] click ignored: primary button hit")
+		return
+	if secondary_button and secondary_button.visible and secondary_button.get_global_rect().has_point(global_point):
+		_log_ui("[Toast] click ignored: secondary button hit")
+		return
+
+	_emit_action(_click_action_name)
+	if _dismiss_on_click_action:
+		dismiss()
+	get_viewport().set_input_as_handled()
+
+
+func _fit_message_lines() -> void:
+	if not message_label:
+		return
+	var line_count := message_label.get_line_count()
+	if line_count <= 0:
+		line_count = message_label.text.count("\n") + 1
+	line_count = max(line_count, 1)
+	var max_allowed := _fit_max_lines if _fit_max_lines > 0 else 8
+	message_label.max_lines_visible = int(clamp(line_count, 1, max_allowed))
+	message_label.custom_minimum_size.y = 0
+	update_minimum_size()
+	_log_ui("[Toast] fit lines text_lines=%d max_lines=%d size_y=%.1f" % [line_count, message_label.max_lines_visible, size.y])
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	# Do not steal focus: only react if focused or mouse is over
 	if not has_focus() and not _is_hovered:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.is_action_pressed("ui_cancel"): # Esc
+		if event.is_action_pressed("ui_cancel"):
 			dismiss()
 			get_viewport().set_input_as_handled()
-		elif event.is_action_pressed("ui_accept") and primary_button.visible: # Enter/Space
+		elif event.is_action_pressed("ui_accept") and primary_button.visible:
 			_emit_action(_action_name_primary)
 			get_viewport().set_input_as_handled()
 
 func _update_accessibility() -> void:
-	# Godot doesn't have ARIA, but we can hint via tooltip and names
-	tooltip_text = "" # avoid duplicate OS tooltips on hover
-	# Expose concise descriptions for AT via accessible_name (Godot 4.3+)
+	tooltip_text = ""
 	if has_method("set_accessible_name"):
 		var heading := ""
 		match kind:
@@ -312,3 +369,13 @@ func _set_aria_role_for_kind() -> void:
 	_aria_role = "status"
 	if kind == Kind.WARNING or kind == Kind.ERROR:
 		_aria_role = "alert"
+
+func _log_ui(message: String) -> void:
+	var tree := get_tree()
+	if not tree:
+		return
+	var logger = null
+	if tree.root.has_node("/root/" + _debug_logger_name):
+		logger = tree.root.get_node("/root/" + _debug_logger_name)
+	if logger and logger.has_method("ui"):
+		logger.ui(message)

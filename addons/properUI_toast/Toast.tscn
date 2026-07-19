@@ -6,6 +6,7 @@
 custom_minimum_size = Vector2(320, 0)
 size_flags_vertical = 0
 focus_mode = 1
+theme_type_variation = &"ToastPanel"
 script = ExtResource("1_e5id5")
 
 [node name="Margin" type="MarginContainer" parent="."]
@@ -34,7 +35,6 @@ size_flags_vertical = 0
 custom_minimum_size = Vector2(50, 0)
 text = "Toast message"
 autowrap_mode = 2
-max_lines_visible = 3
 
 [node name="Actions" type="HBoxContainer" parent="Margin/HBox/Content"]
 visible = false

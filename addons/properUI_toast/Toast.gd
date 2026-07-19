@@ -35,7 +35,8 @@ var _click_action_name: String = ""
 var _dismiss_on_click_action: bool = false
 var _fit_to_content: bool = false
 var _fit_max_lines: int = 8
-var _debug_logger_name: String = "DebugLogger"
+var _celebration: bool = false
+var _celebration_time: float = 0.0
 
 func _ready() -> void:
 	message_label = get_node("Margin/HBox/Content/Message") as Label
@@ -92,6 +93,7 @@ func setup(text: String, type: String = "info", opts: Dictionary = {}) -> void:
 	_fit_to_content = bool(opts.get("fit_to_content", false))
 	_fit_max_lines = int(opts.get("fit_max_lines", 8))
 
+	# Label behavior
 	message_label.text = text
 	message_label.clip_text = false
 	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -109,10 +111,16 @@ func setup(text: String, type: String = "info", opts: Dictionary = {}) -> void:
 			message_label.max_lines_visible = max_lines
 	_set_kind_from_string(type)
 	_set_aria_role_for_kind()
-	_log_ui("[Toast] setup click_action=%s lines=%d" % [_click_action_name, message_label.max_lines_visible])
+	_celebration = bool(opts.get("celebration", false))
+	if _celebration:
+		icon_label.text = "🎉"
+		set_process(true)
+		queue_redraw()
 
+	# Dismiss affordance
 	dismiss_button.visible = bool(opts.get("show_dismiss", true))
 
+	# RTL mirroring support: respect project/parent layout
 	layout_direction = int(opts.get("layout_direction", Control.LAYOUT_DIRECTION_INHERITED))
 
 	position.y = _target_y + (0.0 if _reduced_motion else _slide_px)
@@ -120,6 +128,13 @@ func setup(text: String, type: String = "info", opts: Dictionary = {}) -> void:
 func set_width(w: float) -> void:
 	custom_minimum_size.x = w
 	size.x = w
+
+
+func refresh_layout() -> void:
+	if _fit_to_content:
+		_fit_message_lines()
+	update_minimum_size()
+	reset_size()
 
 func set_queued(queued: bool) -> void:
 	_is_in_queue = queued
@@ -236,7 +251,9 @@ func _set_kind(value: Kind) -> void:
 	_apply_visuals_for_kind()
 
 func _apply_visuals_for_kind() -> void:
-	var style := get_theme_stylebox("panel", "PanelContainer")
+	# Look up the panel stylebox using the node's own type variation so hosts can
+	# theme `ToastPanel` (or any custom variation) without forcing PanelContainer.
+	var style := get_theme_stylebox("panel")
 	var icon_txt: String = "ℹ️"
 
 	if style is StyleBoxFlat:
@@ -267,7 +284,29 @@ func _apply_visuals_for_kind() -> void:
 		add_theme_stylebox_override("panel", sb)
 
 	if icon_label:
-		icon_label.text = icon_txt
+		icon_label.text = "🎉" if _celebration else icon_txt
+
+
+func _process(delta: float) -> void:
+	if not _celebration:
+		set_process(false)
+		return
+	_celebration_time += delta
+	queue_redraw()
+
+
+func _draw() -> void:
+	if not _celebration:
+		return
+	# Lightweight code-drawn confetti so milestone/achievement toasts get a
+	# celebratory affordance without bitmap dependencies.
+	var palette: Array[Color] = [Color("ffe76a"), Color("58e0ca"), Color("ff6b82")]
+	var center: Vector2 = Vector2(size.x * 0.5, size.y * 0.5)
+	for index: int in range(18):
+		var angle: float = float(index) * TAU / 18.0 + _celebration_time * (0.25 if index % 2 == 0 else -0.18)
+		var radius: float = 26.0 + fmod(float(index * 17), 62.0)
+		var point: Vector2 = center + Vector2.from_angle(angle) * radius
+		draw_rect(Rect2(point - Vector2(2.0, 2.0), Vector2(4.0, 4.0)), palette[index % palette.size()])
 
 func _configure_actions(opts: Dictionary) -> void:
 	var act = opts.get("action", null)
@@ -294,8 +333,8 @@ func _configure_actions(opts: Dictionary) -> void:
 func _emit_action(name: String) -> void:
 	if name == "":
 		return
-	_log_ui("[Toast] action_invoked=%s" % name)
 	emit_signal("action_invoked", name)
+	# Do not auto-dismiss on action; let explicit dismiss button handle it
 
 
 func _on_gui_input(event: InputEvent) -> void:
@@ -308,16 +347,11 @@ func _on_gui_input(event: InputEvent) -> void:
 		return
 	var local_point := mouse_event.position
 	var global_point := get_global_transform_with_canvas() * local_point
-	_log_ui("[Toast] body click received action=%s local=%s" % [_click_action_name, str(local_point)])
-
 	if dismiss_button and dismiss_button.visible and dismiss_button.get_global_rect().has_point(global_point):
-		_log_ui("[Toast] click ignored: dismiss button hit")
 		return
 	if primary_button and primary_button.visible and primary_button.get_global_rect().has_point(global_point):
-		_log_ui("[Toast] click ignored: primary button hit")
 		return
 	if secondary_button and secondary_button.visible and secondary_button.get_global_rect().has_point(global_point):
-		_log_ui("[Toast] click ignored: secondary button hit")
 		return
 
 	_emit_action(_click_action_name)
@@ -333,11 +367,11 @@ func _fit_message_lines() -> void:
 	if line_count <= 0:
 		line_count = message_label.text.count("\n") + 1
 	line_count = max(line_count, 1)
-	var max_allowed := _fit_max_lines if _fit_max_lines > 0 else 8
-	message_label.max_lines_visible = int(clamp(line_count, 1, max_allowed))
+	message_label.max_lines_visible = mini(line_count, _fit_max_lines) if _fit_max_lines > 0 else line_count
 	message_label.custom_minimum_size.y = 0
+	message_label.update_minimum_size()
 	update_minimum_size()
-	_log_ui("[Toast] fit lines text_lines=%d max_lines=%d size_y=%.1f" % [line_count, message_label.max_lines_visible, size.y])
+	reset_size()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not has_focus() and not _is_hovered:
@@ -369,13 +403,3 @@ func _set_aria_role_for_kind() -> void:
 	_aria_role = "status"
 	if kind == Kind.WARNING or kind == Kind.ERROR:
 		_aria_role = "alert"
-
-func _log_ui(message: String) -> void:
-	var tree := get_tree()
-	if not tree:
-		return
-	var logger = null
-	if tree.root.has_node("/root/" + _debug_logger_name):
-		logger = tree.root.get_node("/root/" + _debug_logger_name)
-	if logger and logger.has_method("ui"):
-		logger.ui(message)
